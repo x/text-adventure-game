@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Python Terminal</title>
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+            font-family: 'Consolas', 'Monaco', monospace;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        #terminal {
+            flex-grow: 1;
+            background-color: #252526;
+            border: 1px solid #3e3e3e;
+            border-radius: 4px;
+            padding: 15px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        #output {
+            margin-bottom: 10px;
+        }
+        .input-line {
+            display: flex;
+            align-items: center;
+        }
+        .prompt {
+            color: #569cd6;
+            margin-right: 5px;
+        }
+        #input {
+            background: transparent;
+            border: none;
+            color: #d4d4d4;
+            outline: none;
+            font-family: inherit;
+            font-size: inherit;
+            flex-grow: 1;
+            caret-color: #d4d4d4;
+        }
+        .output-line {
+            margin: 2px 0;
+            white-space: pre-wrap;
+        }
+        .error {
+            color: #f48771;
+        }
+        .info {
+            color: #608b4e;
+            font-style: italic;
+        }
+        .success {
+            color: #4ec9b0;
+        }
+        #status {
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #2d2d30;
+            border-radius: 4px;
+        }
+        .input-prompt {
+            color: #ce9178;
+            display: inline;
+        }
+    </style>
+</head>
+<body>
+    <div id="status" class="info">Initializing Python environment...</div>
+    <div id="terminal">
+        <div id="output"></div>
+        <div class="input-line">
+            <span class="prompt">>>> </span>
+            <input type="text" id="input" disabled autocomplete="off">
+        </div>
+    </div>
+
+    <script>
+        let pyodide = null;
+        let awaitingInput = false;
+        let inputResolver = null;
+
+        const output = document.getElementById('output');
+        const input = document.getElementById('input');
+        const status = document.getElementById('status');
+        const terminal = document.getElementById('terminal');
+        const promptSpan = document.querySelector('.prompt');
+
+        function addOutput(text, className = '') {
+            if (!text) return;
+
+            // Check if this is a prompt (text without newline at the end)
+            const isPrompt = !text.endsWith('\n');
+
+            if (isPrompt && window.awaitingInput) {
+                // This is an input prompt - add it inline
+                const span = document.createElement('span');
+                span.className = `input-prompt ${className}`;
+                span.textContent = text;
+
+                const lineDiv = document.createElement('div');
+                lineDiv.className = 'output-line';
+                lineDiv.appendChild(span);
+                output.appendChild(lineDiv);
+
+                terminal.scrollTop = terminal.scrollHeight;
+                return;
+            }
+
+            const lines = text.split('\n');
+            lines.forEach((line, index) => {
+                // Don't create empty line at the end
+                if (index === lines.length - 1 && line === '') return;
+
+                const lineDiv = document.createElement('div');
+                lineDiv.className = `output-line ${className}`;
+                lineDiv.textContent = line || '\u200B';
+                output.appendChild(lineDiv);
+            });
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        function addInlineOutput(text, className = '') {
+            const span = document.createElement('span');
+            span.className = className;
+            span.textContent = text;
+
+            let lastLine = output.lastElementChild;
+            if (!lastLine || lastLine.innerHTML.includes('<br>')) {
+                lastLine = document.createElement('div');
+                lastLine.className = 'output-line';
+                output.appendChild(lastLine);
+            }
+
+            lastLine.appendChild(span);
+            terminal.scrollTop = terminal.scrollHeight;
+        }
+
+        async function setupPythonEnvironment() {
+            // Make JavaScript objects available to Python
+            window.awaitingInput = false;
+            window.inputResolver = null;
+
+            // Create a proper async input function
+            await pyodide.runPython(`
+import asyncio
+import builtins
+import js
+import sys
+
+# Store original input
+_original_input = builtins.input
+
+async def async_input(prompt=""):
+    """Async input function that works with the browser"""
+    if prompt:
+        # Use JavaScript to directly add the prompt to the output
+        js.eval(f"""
+            const span = document.createElement('span');
+            span.className = 'input-prompt';
+            span.textContent = '{prompt}';
+
+            const lineDiv = document.createElement('div');
+            lineDiv.className = 'output-line';
+            lineDiv.appendChild(span);
+            lineDiv.setAttribute('data-input-line', 'true');
+            document.getElementById('output').appendChild(lineDiv);
+            document.getElementById('terminal').scrollTop = document.getElementById('terminal').scrollHeight;
+        """)
+
+    # Create a Python future
+    future = asyncio.Future()
+
+    # Store the resolver in JavaScript
+    def resolve_input(value):
+        future.set_result(value)
+
+    js.inputResolver = resolve_input
+    js.awaitingInput = True
+
+    # Hide the prompt and focus input
+    js.eval("document.querySelector('.prompt').style.display = 'none'")
+    js.eval("document.getElementById('input').focus()")
+
+    # Wait for the future to be resolved
+    result = await future
+
+    js.awaitingInput = False
+    js.eval("document.querySelector('.prompt').style.display = 'inline'")
+
+    return result
+
+# Make it available as 'input' for async contexts
+builtins.input = async_input
+
+# Also make it available as ainput for clarity
+builtins.ainput = async_input
+            `);
+        }
+
+        async function loadPyodideAndPackages() {
+            try {
+                pyodide = await loadPyodide({
+                    stdout: (text) => addOutput(text),
+                    stderr: (text) => addOutput(text, 'error')
+                });
+
+                await setupPythonEnvironment();
+
+                status.textContent = 'Python environment ready!';
+                status.className = 'success';
+                input.disabled = false;
+                input.focus();
+
+            } catch (error) {
+                status.textContent = 'Error initializing Python: ' + error.message;
+                status.className = 'error';
+                console.error(error);
+            }
+        }
+
+        input.addEventListener('keydown', async (e) => {
+            if (e.key === 'Enter') {
+                const value = input.value;
+                input.value = '';
+
+                if (window.awaitingInput && window.inputResolver) {
+                    // Python is waiting for input
+                    // Add the input value to the same line as the prompt
+                    const lastLine = output.lastElementChild;
+                    if (lastLine && lastLine.querySelector('.input-prompt')) {
+                        lastLine.innerHTML += value;
+                    } else {
+                        addOutput(value);
+                    }
+
+                    window.inputResolver(value);
+                    window.inputResolver = null;
+                } else {
+                    // Regular Python code execution
+                    addOutput(`>>> ${value}`);
+
+                    if (value.trim()) {
+                        try {
+                            promptSpan.style.display = 'none';
+                            const result = await pyodide.runPythonAsync(value);
+                            if (result !== undefined && result !== null) {
+                                addOutput(String(result));
+                            }
+                            promptSpan.style.display = 'inline';
+                        } catch (error) {
+                            addOutput(error.message, 'error');
+                            promptSpan.style.display = 'inline';
+                        }
+                    }
+                }
+            }
+        });
+
+        // Load and run game.py
+        async function loadGameFile() {
+            try {
+                addOutput("Attempting to load game.py...");
+                const response = await fetch('game.py');
+                if (!response.ok) {
+                    throw new Error(`Failed to load game.py: ${response.statusText}`);
+                }
+                const gameCode = await response.text();
+                addOutput(`Successfully loaded game.py (${gameCode.length} characters)`);
+                addOutput("Running game.py...\n");
+
+                promptSpan.style.display = 'none';
+
+                // Run the game code
+                try {
+                    await pyodide.runPythonAsync(gameCode);
+                } catch (error) {
+                    addOutput(`\nError: ${error.message}`, 'error');
+
+                    if (error.message.includes("object async_input can't be used in 'await' expression")) {
+                        addOutput("\nYour code needs to be in an async function. Example:", 'info');
+                        addOutput("async def main():", 'info');
+                        addOutput("    name = await input('Enter name: ')", 'info');
+                        addOutput("    print(f'Hello {name}')", 'info');
+                        addOutput("\nawait main()", 'info');
+                    }
+                }
+
+                promptSpan.style.display = 'inline';
+
+            } catch (error) {
+                addOutput(`Error: ${error.message}`, 'error');
+                promptSpan.style.display = 'inline';
+            }
+        }
+
+        // Load Pyodide and then the game
+        loadPyodideAndPackages().then(() => {
+            loadGameFile();
+        });
+
+        // For manual testing in console
+        window.pyodide = () => pyodide;
+    </script>
+</body>
+</html>
