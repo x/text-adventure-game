@@ -265,6 +265,66 @@ builtins.ainput = async_input
             }
         });
 
+        // Transform code to work with async input
+        function transformCode(code) {
+            const lines = code.split('\n');
+            const transformedLines = [];
+            const functionNames = new Set();
+
+            // First pass: find all function definitions and transform them
+            for (let i = 0; i < lines.length; i++) {
+                let line = lines[i];
+
+                // Check if this is a function definition (at any indentation level)
+                const funcMatch = line.match(/^(\s*)def\s+(\w+)\s*\(/);
+                if (funcMatch) {
+                    const indent = funcMatch[1];
+                    const funcName = funcMatch[2];
+                    functionNames.add(funcName);
+                    // Replace def with async def
+                    line = line.replace(/^(\s*)def\s+/, '$1async def ');
+                }
+
+                transformedLines.push(line);
+            }
+
+            // Second pass: replace input() calls and function calls
+            for (let i = 0; i < transformedLines.length; i++) {
+                let line = transformedLines[i];
+
+                // Skip function definition lines
+                if (line.includes('def ')) {
+                    transformedLines[i] = line;
+                    continue;
+                }
+
+                // Replace input( with await input( (but not if already awaited)
+                if (!line.includes('await input(')) {
+                    line = line.replace(/\binput\s*\(/g, 'await input(');
+                }
+
+                // Get the indentation level of this line
+                const indentMatch = line.match(/^(\s*)/);
+                const indent = indentMatch ? indentMatch[1] : '';
+
+                // Only add await to function calls that are inside other functions (indented)
+                if (indent.length > 0) {
+                    functionNames.forEach(funcName => {
+                        // Only add await if the function is called (has parentheses) and not already awaited
+                        if (line.includes(funcName + '(') && !line.includes('await ' + funcName)) {
+                            // Use word boundaries to avoid partial matches
+                            const regex = new RegExp(`\\b(${funcName}\\s*\\()`, 'g');
+                            line = line.replace(regex, 'await $1');
+                        }
+                    });
+                }
+
+                transformedLines[i] = line;
+            }
+
+            return transformedLines.join('\n');
+        }
+
         // Load and run game.py
         async function loadGameFile() {
             try {
@@ -273,8 +333,15 @@ builtins.ainput = async_input
                 if (!response.ok) {
                     throw new Error(`Failed to load game.py: ${response.statusText}`);
                 }
-                const gameCode = await response.text();
+                let gameCode = await response.text();
                 addOutput(`Successfully loaded game.py (${gameCode.length} characters)`);
+
+                // Transform the code if it uses input()
+                if (gameCode.includes('input(') && !gameCode.includes('await input(')) {
+                    addOutput("Converting code for browser compatibility...", 'info');
+                    gameCode = transformCode(gameCode);
+                }
+
                 addOutput("Running game.py...\n");
 
                 promptSpan.style.display = 'none';
