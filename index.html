@@ -5,7 +5,7 @@
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 </head>
 <body style="margin: 0; padding: 20px; background: #1e1e1e;">
-    <div id="terminal" style="height: 600px;"></div>
+    <div id="terminal"></div>
 
     <script>
         // Create terminal
@@ -24,7 +24,10 @@
                 if (e.data.type === 'init') {
                     pyodide = await loadPyodide({
                         stdout: (text) => {
-                            self.postMessage({ type: 'output', text: text });
+                            console.log('Python stdout:', JSON.stringify(text));
+                            // Python print() should add newline, but Pyodide strips it
+                            // Add it back for print statements
+                            self.postMessage({ type: 'output', text: text + '\\n' });
                         },
                         stderr: (text) => self.postMessage({ type: 'output', text: text })
                     });
@@ -101,12 +104,17 @@ js.resolve_input = resolve_input
             if (e.data.type === 'ready') {
                 ready = true;
                 term.writeln('Python ready!');
-                term.write('>>> ');
-                loadGame();
+                loadGame();  // Start game immediately, no prompt
             }
             else if (e.data.type === 'output') {
-                // Write text exactly as received, Python's print() includes \n
-                term.write(e.data.text);
+                // Write text with proper newline handling
+                const text = e.data.text;
+                console.log('Received output:', JSON.stringify(text));
+                if (text) {
+                    // Replace any \n with \r\n for proper terminal display
+                    const formattedText = text.replace(/\n/g, '\r\n');
+                    term.write(formattedText);
+                }
             }
             else if (e.data.type === 'input_request') {
                 console.log('Input requested');
@@ -114,9 +122,8 @@ js.resolve_input = resolve_input
                 inputBuffer = '';
             }
             else if (e.data.type === 'done') {
-                if (!waitingForInput) {
-                    term.write('>>> ');
-                }
+                // Game is done - don't show prompt
+                term.writeln('\n[Game Complete]');
             }
         };
 
