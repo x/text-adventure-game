@@ -8,8 +8,10 @@
     <div id="terminal"></div>
 
     <script>
-        // Create terminal
-        const term = new Terminal();
+        // Create terminal with responsive font size
+        const term = new Terminal({
+            fontSize: window.innerWidth < 768 ? 14 : 16
+        });
         term.open(document.getElementById('terminal'));
 
         // Create worker code inline
