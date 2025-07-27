@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+</head>
+<body style="margin: 0; padding: 20px; background: #1e1e1e;">
+    <div id="terminal"></div>
+
+    <script>
+        // Create terminal
+        const term = new Terminal();
+        term.open(document.getElementById('terminal'));
+
+        // Create worker code inline
+        const workerCode = `
+            importScripts('https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js');
+
+            let pyodide;
+
+            self.onmessage = async function(e) {
+                console.log('Worker received:', e.data.type);
+
+                if (e.data.type === 'init') {
+                    pyodide = await loadPyodide({
+                        stdout: (text) => {
+                            console.log('Python stdout:', JSON.stringify(text));
+                            // Python print() should add newline, but Pyodide strips it
+                            // Add it back for print statements
+                            self.postMessage({ type: 'output', text: text + '\\n' });
+                        },
+                        stderr: (text) => self.postMessage({ type: 'output', text: text })
+                    });
+
+                    // Set up async input function
+                    await pyodide.runPython(\`
+import builtins
+import asyncio
+import js
+
+# Global to store the input future
+input_future = None
+
+async def custom_input(prompt=""):
+    global input_future
+
+    if prompt:
+        js.postMessage(js.Object.fromEntries([['type', 'output'], ['text', prompt]]))
+
+    # Signal we need input
+    js.postMessage(js.Object.fromEntries([['type', 'input_request']]))
+
+    # Create a future to wait for input
+    input_future = asyncio.Future()
+
+    # Wait for input
+    result = await input_future
+    return result
+
+# Function to resolve input from JS
+def resolve_input(value):
+    global input_future
+    if input_future and not input_future.done():
+        input_future.set_result(value)
+
+builtins.input = custom_input
+js.resolve_input = resolve_input
+                    \`);
+
+                    self.postMessage({ type: 'ready' });
+                }
+                else if (e.data.type === 'run') {
+                    try {
+                        const result = await pyodide.runPythonAsync(e.data.code);
+                        if (result !== undefined && result !== null) {
+                            self.postMessage({ type: 'output', text: String(result) + '\\n' });
+                        }
+                        self.postMessage({ type: 'done' });
+                    } catch (err) {
+                        self.postMessage({ type: 'output', text: err.toString() + '\\n' });
+                        self.postMessage({ type: 'done' });
+                    }
+                }
+                else if (e.data.type === 'input_response') {
+                    console.log('Worker processing input:', e.data.value);
+                    // Send input to Python
+                    pyodide.globals.get('resolve_input')(e.data.value);
+                }
+            };
+        `;
+
+        // Create worker
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        let inputBuffer = '';
+        let ready = false;
+        let waitingForInput = false;
+
+        // Handle worker messages
+        worker.onmessage = (e) => {
+            console.log('Main received:', e.data.type);
+
+            if (e.data.type === 'ready') {
+                ready = true;
+                term.writeln('Python ready!');
+                loadGame();  // Start game immediately, no prompt
+            }
+            else if (e.data.type === 'output') {
+                // Write text with proper newline handling
+                const text = e.data.text;
+                console.log('Received output:', JSON.stringify(text));
+                if (text) {
+                    // Replace any \n with \r\n for proper terminal display
+                    const formattedText = text.replace(/\n/g, '\r\n');
+                    term.write(formattedText);
+                }
+            }
+            else if (e.data.type === 'input_request') {
+                console.log('Input requested');
+                waitingForInput = true;
+                inputBuffer = '';
+            }
+            else if (e.data.type === 'done') {
+                // Game is done - don't show prompt
+                term.writeln('\n[Game Complete]');
+            }
+        };
+
+        // Handle terminal input
+        term.onData(data => {
+            if (!ready) return;
+
+            if (data === '\r') {
+                term.writeln('');
+                if (waitingForInput) {
+                    console.log('Sending input:', inputBuffer);
+                    // Send input to Python
+                    worker.postMessage({ type: 'input_response', value: inputBuffer });
+                    waitingForInput = false;
+                    inputBuffer = '';
+                } else {
+                    // Execute Python code
+                    if (inputBuffer.trim()) {
+                        worker.postMessage({ type: 'run', code: inputBuffer });
+                    } else {
+                        term.write('>>> ');
+                    }
+                    inputBuffer = '';
+                }
+            }
+            else if (data === '\x7f') { // backspace
+                if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.slice(0, -1);
+                    term.write('\b \b');
+                }
+            }
+            else if (data >= ' ') {
+                inputBuffer += data;
+                term.write(data);
+            }
+        });
+
+        // Load game.py with proper transformation
+        async function loadGame() {
+            try {
+                const response = await fetch('game.py');
+                if (response.ok) {
+                    const code = await response.text();
+                    term.writeln('Loading game.py...');
+
+                    // Use your working transformation logic
+                    const lines = code.split('\n');
+                    const transformedLines = [];
+                    const functionNames = new Set();
+
+                    // First pass: find functions and make them async
+                    for (let i = 0; i < lines.length; i++) {
+                        let line = lines[i];
+
+                        const funcMatch = line.match(/^(\s*)def\s+(\w+)\s*\(/);
+                        if (funcMatch) {
+                            const funcName = funcMatch[2];
+                            functionNames.add(funcName);
+                            line = line.replace(/^(\s*)def\s+/, '$1async def ');
+                        }
+
+                        transformedLines.push(line);
+                    }
+
+                    // Second pass: add await where needed
+                    for (let i = 0; i < transformedLines.length; i++) {
+                        let line = transformedLines[i];
+
+                        if (line.includes('def ')) {
+                            continue;
+                        }
+
+                        // Replace input( with await input(
+                        if (!line.includes('await input(')) {
+                            line = line.replace(/\binput\s*\(/g, 'await input(');
+                        }
+
+                        // Add await to all function calls (not just indented ones)
+                        functionNames.forEach(funcName => {
+                            if (line.includes(funcName + '(') && !line.includes('await ' + funcName)) {
+                                const regex = new RegExp(`\\b(${funcName}\\s*\\()`, 'g');
+                                line = line.replace(regex, 'await $1');
+                            }
+                        });
+
+                        transformedLines[i] = line;
+                    }
+
+                    const transformedCode = transformedLines.join('\n');
+                    console.log('Running code:', transformedCode);
+
+                    worker.postMessage({ type: 'run', code: transformedCode });
+                }
+            } catch (err) {
+                console.error('Error loading game:', err);
+            }
+        }
+
+        // Initialize
+        term.writeln('Initializing Python...');
+        worker.postMessage({ type: 'init' });
+    </script>
+</body>
+</html>
