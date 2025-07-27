@@ -1,381 +1,223 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Python Terminal</title>
-    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
-    <style>
-        body {
-            margin: 0;
-            padding: 20px;
-            background-color: #1e1e1e;
-            color: #d4d4d4;
-            font-family: 'Consolas', 'Monaco', monospace;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-        }
-        #terminal {
-            flex-grow: 1;
-            background-color: #252526;
-            border: 1px solid #3e3e3e;
-            border-radius: 4px;
-            padding: 15px;
-            overflow-y: auto;
-            white-space: pre-wrap;
-            word-wrap: break-word;
-        }
-        #output {
-            margin-bottom: 10px;
-        }
-        .input-line {
-            display: flex;
-            align-items: center;
-        }
-        .prompt {
-            color: #569cd6;
-            margin-right: 5px;
-        }
-        #input {
-            background: transparent;
-            border: none;
-            color: #d4d4d4;
-            outline: none;
-            font-family: inherit;
-            font-size: inherit;
-            flex-grow: 1;
-            caret-color: #d4d4d4;
-        }
-        .output-line {
-            margin: 2px 0;
-            white-space: pre-wrap;
-        }
-        .error {
-            color: #f48771;
-        }
-        .info {
-            color: #608b4e;
-            font-style: italic;
-        }
-        .success {
-            color: #4ec9b0;
-        }
-        #status {
-            margin-bottom: 10px;
-            padding: 10px;
-            background-color: #2d2d30;
-            border-radius: 4px;
-        }
-        .input-prompt {
-            color: #ce9178;
-            display: inline;
-        }
-    </style>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
 </head>
-<body>
-    <div id="status" class="info">Initializing Python environment...</div>
-    <div id="terminal">
-        <div id="output"></div>
-        <div class="input-line">
-            <span class="prompt">>>> </span>
-            <input type="text" id="input" disabled autocomplete="off">
-        </div>
-    </div>
+<body style="margin: 0; padding: 20px; background: #1e1e1e;">
+    <div id="terminal" style="height: 600px;"></div>
 
     <script>
-        let pyodide = null;
-        let awaitingInput = false;
-        let inputResolver = null;
+        // Create terminal
+        const term = new Terminal();
+        term.open(document.getElementById('terminal'));
 
-        const output = document.getElementById('output');
-        const input = document.getElementById('input');
-        const status = document.getElementById('status');
-        const terminal = document.getElementById('terminal');
-        const promptSpan = document.querySelector('.prompt');
+        // Create worker code inline
+        const workerCode = `
+            importScripts('https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js');
 
-        function addOutput(text, className = '') {
-            if (!text) return;
+            let pyodide;
 
-            // Check if this is a prompt (text without newline at the end)
-            const isPrompt = !text.endsWith('\n');
+            self.onmessage = async function(e) {
+                console.log('Worker received:', e.data.type);
 
-            if (isPrompt && window.awaitingInput) {
-                // This is an input prompt - add it inline
-                const span = document.createElement('span');
-                span.className = `input-prompt ${className}`;
-                span.textContent = text;
+                if (e.data.type === 'init') {
+                    pyodide = await loadPyodide({
+                        stdout: (text) => {
+                            self.postMessage({ type: 'output', text: text });
+                        },
+                        stderr: (text) => self.postMessage({ type: 'output', text: text })
+                    });
 
-                const lineDiv = document.createElement('div');
-                lineDiv.className = 'output-line';
-                lineDiv.appendChild(span);
-                output.appendChild(lineDiv);
-
-                terminal.scrollTop = terminal.scrollHeight;
-                return;
-            }
-
-            const lines = text.split('\n');
-            lines.forEach((line, index) => {
-                // Don't create empty line at the end
-                if (index === lines.length - 1 && line === '') return;
-
-                const lineDiv = document.createElement('div');
-                lineDiv.className = `output-line ${className}`;
-                lineDiv.textContent = line || '\u200B';
-                output.appendChild(lineDiv);
-            });
-            terminal.scrollTop = terminal.scrollHeight;
-        }
-
-        function addInlineOutput(text, className = '') {
-            const span = document.createElement('span');
-            span.className = className;
-            span.textContent = text;
-
-            let lastLine = output.lastElementChild;
-            if (!lastLine || lastLine.innerHTML.includes('<br>')) {
-                lastLine = document.createElement('div');
-                lastLine.className = 'output-line';
-                output.appendChild(lastLine);
-            }
-
-            lastLine.appendChild(span);
-            terminal.scrollTop = terminal.scrollHeight;
-        }
-
-        async function setupPythonEnvironment() {
-            // Make JavaScript objects available to Python
-            window.awaitingInput = false;
-            window.inputResolver = null;
-
-            // Create a proper async input function
-            await pyodide.runPython(`
-import asyncio
+                    // Set up async input function
+                    await pyodide.runPython(\`
 import builtins
+import asyncio
 import js
-import sys
 
-# Store original input
-_original_input = builtins.input
+# Global to store the input future
+input_future = None
 
-async def async_input(prompt=""):
-    """Async input function that works with the browser"""
+async def custom_input(prompt=""):
+    global input_future
+
     if prompt:
-        # Use JavaScript to directly add the prompt to the output
-        js.eval(f"""
-            const span = document.createElement('span');
-            span.className = 'input-prompt';
-            span.textContent = '{prompt}';
+        js.postMessage(js.Object.fromEntries([['type', 'output'], ['text', prompt]]))
 
-            const lineDiv = document.createElement('div');
-            lineDiv.className = 'output-line';
-            lineDiv.appendChild(span);
-            lineDiv.setAttribute('data-input-line', 'true');
-            document.getElementById('output').appendChild(lineDiv);
-            document.getElementById('terminal').scrollTop = document.getElementById('terminal').scrollHeight;
-        """)
+    # Signal we need input
+    js.postMessage(js.Object.fromEntries([['type', 'input_request']]))
 
-    # Create a Python future
-    future = asyncio.Future()
+    # Create a future to wait for input
+    input_future = asyncio.Future()
 
-    # Store the resolver in JavaScript
-    def resolve_input(value):
-        future.set_result(value)
-
-    js.inputResolver = resolve_input
-    js.awaitingInput = True
-
-    # Hide the prompt and focus input
-    js.eval("document.querySelector('.prompt').style.display = 'none'")
-    js.eval("document.getElementById('input').focus()")
-
-    # Wait for the future to be resolved
-    result = await future
-
-    js.awaitingInput = False
-    js.eval("document.querySelector('.prompt').style.display = 'inline'")
-
+    # Wait for input
+    result = await input_future
     return result
 
-# Make it available as 'input' for async contexts
-builtins.input = async_input
+# Function to resolve input from JS
+def resolve_input(value):
+    global input_future
+    if input_future and not input_future.done():
+        input_future.set_result(value)
 
-# Also make it available as ainput for clarity
-builtins.ainput = async_input
-            `);
-        }
+builtins.input = custom_input
+js.resolve_input = resolve_input
+                    \`);
 
-        async function loadPyodideAndPackages() {
-            try {
-                pyodide = await loadPyodide({
-                    stdout: (text) => addOutput(text),
-                    stderr: (text) => addOutput(text, 'error')
-                });
-
-                await setupPythonEnvironment();
-
-                status.textContent = 'Python environment ready!';
-                status.className = 'success';
-                input.disabled = false;
-                input.focus();
-
-            } catch (error) {
-                status.textContent = 'Error initializing Python: ' + error.message;
-                status.className = 'error';
-                console.error(error);
-            }
-        }
-
-        input.addEventListener('keydown', async (e) => {
-            if (e.key === 'Enter') {
-                const value = input.value;
-                input.value = '';
-
-                if (window.awaitingInput && window.inputResolver) {
-                    // Python is waiting for input
-                    // Add the input value to the same line as the prompt
-                    const lastLine = output.lastElementChild;
-                    if (lastLine && lastLine.querySelector('.input-prompt')) {
-                        lastLine.innerHTML += value;
-                    } else {
-                        addOutput(value);
+                    self.postMessage({ type: 'ready' });
+                }
+                else if (e.data.type === 'run') {
+                    try {
+                        const result = await pyodide.runPythonAsync(e.data.code);
+                        if (result !== undefined && result !== null) {
+                            self.postMessage({ type: 'output', text: String(result) + '\\n' });
+                        }
+                        self.postMessage({ type: 'done' });
+                    } catch (err) {
+                        self.postMessage({ type: 'output', text: err.toString() + '\\n' });
+                        self.postMessage({ type: 'done' });
                     }
+                }
+                else if (e.data.type === 'input_response') {
+                    console.log('Worker processing input:', e.data.value);
+                    // Send input to Python
+                    pyodide.globals.get('resolve_input')(e.data.value);
+                }
+            };
+        `;
 
-                    window.inputResolver(value);
-                    window.inputResolver = null;
+        // Create worker
+        const blob = new Blob([workerCode], { type: 'application/javascript' });
+        const worker = new Worker(URL.createObjectURL(blob));
+
+        let inputBuffer = '';
+        let ready = false;
+        let waitingForInput = false;
+
+        // Handle worker messages
+        worker.onmessage = (e) => {
+            console.log('Main received:', e.data.type);
+
+            if (e.data.type === 'ready') {
+                ready = true;
+                term.writeln('Python ready!');
+                term.write('>>> ');
+                loadGame();
+            }
+            else if (e.data.type === 'output') {
+                // Write text exactly as received, Python's print() includes \n
+                term.write(e.data.text);
+            }
+            else if (e.data.type === 'input_request') {
+                console.log('Input requested');
+                waitingForInput = true;
+                inputBuffer = '';
+            }
+            else if (e.data.type === 'done') {
+                if (!waitingForInput) {
+                    term.write('>>> ');
+                }
+            }
+        };
+
+        // Handle terminal input
+        term.onData(data => {
+            if (!ready) return;
+
+            if (data === '\r') {
+                term.writeln('');
+                if (waitingForInput) {
+                    console.log('Sending input:', inputBuffer);
+                    // Send input to Python
+                    worker.postMessage({ type: 'input_response', value: inputBuffer });
+                    waitingForInput = false;
+                    inputBuffer = '';
                 } else {
-                    // Regular Python code execution
-                    addOutput(`>>> ${value}`);
-
-                    if (value.trim()) {
-                        try {
-                            promptSpan.style.display = 'none';
-                            const result = await pyodide.runPythonAsync(value);
-                            if (result !== undefined && result !== null) {
-                                addOutput(String(result));
-                            }
-                            promptSpan.style.display = 'inline';
-                        } catch (error) {
-                            addOutput(error.message, 'error');
-                            promptSpan.style.display = 'inline';
-                        }
+                    // Execute Python code
+                    if (inputBuffer.trim()) {
+                        worker.postMessage({ type: 'run', code: inputBuffer });
+                    } else {
+                        term.write('>>> ');
                     }
+                    inputBuffer = '';
                 }
+            }
+            else if (data === '\x7f') { // backspace
+                if (inputBuffer.length > 0) {
+                    inputBuffer = inputBuffer.slice(0, -1);
+                    term.write('\b \b');
+                }
+            }
+            else if (data >= ' ') {
+                inputBuffer += data;
+                term.write(data);
             }
         });
 
-        // Transform code to work with async input
-        function transformCode(code) {
-            const lines = code.split('\n');
-            const transformedLines = [];
-            const functionNames = new Set();
-
-            // First pass: find all function definitions and transform them
-            for (let i = 0; i < lines.length; i++) {
-                let line = lines[i];
-
-                // Check if this is a function definition (at any indentation level)
-                const funcMatch = line.match(/^(\s*)def\s+(\w+)\s*\(/);
-                if (funcMatch) {
-                    const indent = funcMatch[1];
-                    const funcName = funcMatch[2];
-                    functionNames.add(funcName);
-                    // Replace def with async def
-                    line = line.replace(/^(\s*)def\s+/, '$1async def ');
-                }
-
-                transformedLines.push(line);
-            }
-
-            // Second pass: replace input() calls and function calls
-            for (let i = 0; i < transformedLines.length; i++) {
-                let line = transformedLines[i];
-
-                // Skip function definition lines
-                if (line.includes('def ')) {
-                    transformedLines[i] = line;
-                    continue;
-                }
-
-                // Replace input( with await input( (but not if already awaited)
-                if (!line.includes('await input(')) {
-                    line = line.replace(/\binput\s*\(/g, 'await input(');
-                }
-
-                // Get the indentation level of this line
-                const indentMatch = line.match(/^(\s*)/);
-                const indent = indentMatch ? indentMatch[1] : '';
-
-                // Only add await to function calls that are inside other functions (indented)
-                if (indent.length > 0) {
-                    functionNames.forEach(funcName => {
-                        // Only add await if the function is called (has parentheses) and not already awaited
-                        if (line.includes(funcName + '(') && !line.includes('await ' + funcName)) {
-                            // Use word boundaries to avoid partial matches
-                            const regex = new RegExp(`\\b(${funcName}\\s*\\()`, 'g');
-                            line = line.replace(regex, 'await $1');
-                        }
-                    });
-                }
-
-                transformedLines[i] = line;
-            }
-
-            return transformedLines.join('\n');
-        }
-
-        // Load and run game.py
-        async function loadGameFile() {
+        // Load game.py with proper transformation
+        async function loadGame() {
             try {
-                addOutput("Attempting to load game.py...");
                 const response = await fetch('game.py');
-                if (!response.ok) {
-                    throw new Error(`Failed to load game.py: ${response.statusText}`);
-                }
-                let gameCode = await response.text();
-                addOutput(`Successfully loaded game.py (${gameCode.length} characters)`);
+                if (response.ok) {
+                    const code = await response.text();
+                    term.writeln('Loading game.py...');
 
-                // Transform the code if it uses input()
-                if (gameCode.includes('input(') && !gameCode.includes('await input(')) {
-                    addOutput("Converting code for browser compatibility...", 'info');
-                    gameCode = transformCode(gameCode);
-                }
+                    // Use your working transformation logic
+                    const lines = code.split('\n');
+                    const transformedLines = [];
+                    const functionNames = new Set();
 
-                addOutput("Running game.py...\n");
+                    // First pass: find functions and make them async
+                    for (let i = 0; i < lines.length; i++) {
+                        let line = lines[i];
 
-                promptSpan.style.display = 'none';
+                        const funcMatch = line.match(/^(\s*)def\s+(\w+)\s*\(/);
+                        if (funcMatch) {
+                            const funcName = funcMatch[2];
+                            functionNames.add(funcName);
+                            line = line.replace(/^(\s*)def\s+/, '$1async def ');
+                        }
 
-                // Run the game code
-                try {
-                    await pyodide.runPythonAsync(gameCode);
-                } catch (error) {
-                    addOutput(`\nError: ${error.message}`, 'error');
-
-                    if (error.message.includes("object async_input can't be used in 'await' expression")) {
-                        addOutput("\nYour code needs to be in an async function. Example:", 'info');
-                        addOutput("async def main():", 'info');
-                        addOutput("    name = await input('Enter name: ')", 'info');
-                        addOutput("    print(f'Hello {name}')", 'info');
-                        addOutput("\nawait main()", 'info');
+                        transformedLines.push(line);
                     }
+
+                    // Second pass: add await where needed
+                    for (let i = 0; i < transformedLines.length; i++) {
+                        let line = transformedLines[i];
+
+                        if (line.includes('def ')) {
+                            continue;
+                        }
+
+                        // Replace input( with await input(
+                        if (!line.includes('await input(')) {
+                            line = line.replace(/\binput\s*\(/g, 'await input(');
+                        }
+
+                        // Add await to all function calls (not just indented ones)
+                        functionNames.forEach(funcName => {
+                            if (line.includes(funcName + '(') && !line.includes('await ' + funcName)) {
+                                const regex = new RegExp(`\\b(${funcName}\\s*\\()`, 'g');
+                                line = line.replace(regex, 'await $1');
+                            }
+                        });
+
+                        transformedLines[i] = line;
+                    }
+
+                    const transformedCode = transformedLines.join('\n');
+                    console.log('Running code:', transformedCode);
+
+                    worker.postMessage({ type: 'run', code: transformedCode });
                 }
-
-                promptSpan.style.display = 'inline';
-
-            } catch (error) {
-                addOutput(`Error: ${error.message}`, 'error');
-                promptSpan.style.display = 'inline';
+            } catch (err) {
+                console.error('Error loading game:', err);
             }
         }
 
-        // Load Pyodide and then the game
-        loadPyodideAndPackages().then(() => {
-            loadGameFile();
-        });
-
-        // For manual testing in console
-        window.pyodide = () => pyodide;
+        // Initialize
+        term.writeln('Initializing Python...');
+        worker.postMessage({ type: 'init' });
     </script>
 </body>
 </html>
