@@ -1,3 +1,6 @@
+> [!NOTE]
+> This repo was created for for teaching purposes only.
+
 # Text Adventure Game Bootstrap
 
 [Demo](https://x.github.io/text-adventure-game/)
@@ -38,21 +41,25 @@ Your game should be written in standard Python. The web terminal supports:
 - Conditional statements (`if`/`elif`/`else`)
 - Loops (`while`/`for`/`break`)
 
-## Limitations
-- Your game must be in a single `game.py` file
-- No external Python libraries (only Python built-ins)
-- The game runs entirely in the browser using Pyodide
-
 ## Sharing Your Game
 Once your game is working, share the link with friends! They can play directly in their browser without installing Python.
+
+## Limitations
+
+- Your game must be contained in a single `game.py` file.
+- No external Python libraries are allowed, only those supported by Pyodide [^1].
+- Because standard Python `input` is not fully supported in Pyodide [^2], the built-in `input` function is replaced with an asynchronous version [^3]. All code is preprocessed so that calls to `input` become `await input`, all functions are defined with `async def`, and all function calls are prefixed with `await` [^4].
+- This approach is **very** error-prone and will break if you use lambdas, define functions inside other functions, or reassign functions to new variable names (such as when using callbacks).
+
+[^1]: https://pyodide.org/en/stable/usage/wasm-constraints.html
+[^2]: https://www.youtube.com/watch?v=-SggWFS15Do
+[^3]: https://github.com/x/text-adventure-game/blob/43945a822d7c4c9231a854d490a4f287ead5cb21/index.html#L76-L107
+[^4]: https://github.com/x/text-adventure-game/blob/43945a822d7c4c9231a854d490a4f287ead5cb21/index.html#L212-L253
 
 ## Troubleshooting
 - If your game doesn't load, check for Python syntax errors
 - Make sure your `game.py` file is in the root of your repository
 - Allow a few minutes for GitHub Pages to update after making changes
-- Check the browser console (F12) for error messages
+- Check the browser console [^1] for the preprocessed code
 
-## Credits
-This project uses:
-- [Pyodide](https://pyodide.org/) - Python running in the browser
-- [xterm.js](https://xtermjs.org/) - Terminal emulator for the web
+[^1]: https://developer.chrome.com/docs/devtools/open
