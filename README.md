@@ -151,9 +151,9 @@ This will let you print specific colors:
 ```python
 print_with_color("this is red", "red")
 ```
->  <code style="color : red">this is red</code>
+${{\color{Red}{\texttt{  this is red \}}}}$
 
 ```python
 print_with_color("this is cyan", "cyan")
 ```
->  <code style="color : cyan">this is cyan</code>
+${{\color{Cyan}{\texttt{  this is cyan \}}}}$
