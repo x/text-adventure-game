@@ -60,6 +60,6 @@ Once your game is working, share the link with friends! They can play directly i
 - If your game doesn't load, check for Python syntax errors
 - Make sure your `game.py` file is in the root of your repository
 - Allow a few minutes for GitHub Pages to update after making changes
-- Check the browser console [^1] for the preprocessed code
+- Check the browser console [^5] for the preprocessed code
 
-[^1]: https://developer.chrome.com/docs/devtools/open
+[^5]: https://developer.chrome.com/docs/devtools/open
