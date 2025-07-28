@@ -63,3 +63,97 @@ Once your game is working, share the link with friends! They can play directly i
 - Check the browser console [^5] for the preprocessed code
 
 [^5]: https://developer.chrome.com/docs/devtools/open
+
+
+## Useful Functions
+
+Here are some helpful functions you may want to add into your text adventure game.
+
+### Get Menu Option
+
+You may want to create a function for getting a menu option.
+
+```python
+def get_menu_option(option_1, option_2, option_3):
+    print("Menu:")
+    print(f"1. {option_1}")
+    print(f"2. {option_2}")
+    print(f"3. {option_3}")
+    while True:
+        option = input("Enter option (1,2,3): ")
+        if option == "1" or option == option_1:
+            return 1
+        elif option == "2" or option == option_2:
+            return 2
+        elif option == "3" or option == option_3:
+            return 3
+        else:
+            # Loop back to top of while-loop
+            print(f"Invalid input: {option}")
+```
+
+This is reusable in your code and lets your write your if-statements to only check a number instead of the full string.
+
+```python
+action = get_menu_option("go north", "go south", "open door")
+if action == 1:
+    # Code for going north
+elif action == 2:
+    # Code for going south
+elif action == 3:
+    # Code for opening door
+else:
+    print(f"BAD ACTION {action}")
+```
+
+### Clear Screen
+
+You might prefer to clear the screen at the start of every new room. This can be done (in both a Google Colab notebook and when hosted as a webpage with xterm.js) using the following function:
+
+```python
+def clear_screen():
+    import os
+    import sys
+    # Check if running in Jupyter notebook
+    try:
+        from IPython import get_ipython
+        if get_ipython() is not None:
+            from IPython.display import clear_output
+            clear_output(wait=True)
+            return
+    except ImportError:
+        pass
+
+    # For xterm.js in browser
+    print("\033[2J\033[H", end="")
+
+    # Fallback for terminal environments
+    if os.name == 'posix':  # For Unix/Linux/MacOS
+        os.system('clear')
+    elif os.name == 'nt':   # For Windows
+        os.system('cls')
+```
+
+
+### Print With Color
+
+```python
+def print_with_color(text, color, bold=False):
+    colors = ["red", "green", "yellow", "blue", "magenta", "cyan"]
+    if not color in colors:
+        raise ValueError(f"Invalid color: {color}; Choose one of: {colors}")
+    ansi_code = colors.index(color) + 31 # https://en.wikipedia.org/wiki/ANSI_escape_code
+    print(f"\033[{ansi_code}m{text}\033[0m")
+```
+
+This will let you print specific colors:
+
+```python
+print_with_color("this is red", "red")
+```
+>  <code style="color : red">this is red</code>
+
+```python
+print_with_color("this is cyan", "cyan")
+```
+>  <code style="color : cyan">this is cyan</code>
